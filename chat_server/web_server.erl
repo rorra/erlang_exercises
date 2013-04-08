@@ -25,7 +25,25 @@ handle("/register", Req) ->
       Req:respond({200, [{"Content-Type", "text/plain"}], ?OK});
     Error ->
       Req:respond({500, [{"Content-Type", "text/plain"}], subst("Error: ~s~n", [Error])})
-  end.
+  end;
+
+handle("/poll", Req) ->
+  Params = Req:parse_qs(),
+  NickName = proplists:get_value("nick", Params),
+  case mucc:poll(NickName) of
+    {error, Error} ->
+      Req:respond({500, [{"Content-Type", "text/plain"}], subst("Error: ~s~n", [Error])});
+    Messages ->
+      io:format("~s~n", [Messages]),
+      case length(Messages) == 0 of
+        true ->
+          Req:respond({200, [{"Content-Type", "text/plain"}], <<"none">>});
+        false ->
+          Template = lists:foldl(fun(_, Acc) -> ["~s~n"|Acc] end, [], Messages),
+          Req:respond({200, [{"Content-Type", "text/plain"}],
+            subst(lists:flatten(Template), Messages)})
+      end
+  end;
 
 handle(Unknown, Req) ->
   Req:respond({404, [{"Content-Type", "text/plain"}], subst("Unknown action: ~s~n", [Unknown])}).

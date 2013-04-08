@@ -21,6 +21,15 @@ register_nickname(NickName) ->
       Error
   end.
 
+poll(NickName) ->
+  global:send(?SERVER, {poll, Nickname, self()}),
+  receive
+    {ok, Messages} ->
+      Messages;
+    Error ->
+      Error
+  end.
+
 server_loop(Proxies) ->
   receive
     {register, NickName, Caller} ->
@@ -33,7 +42,19 @@ server_loop(Proxies) ->
         {ok, _} ->
           Caller ! {error, duplicate_nick_found},
           server_loop(Proxies)
-      end
+      end;
+    {poll, NickName, Caller} ->
+      case dict:find(NickName, Proxies) of
+        error ->
+          Caller ! {error, unknown_nick};
+        {ok, Pid} ->
+          Pid ! {get_messages, self()},
+          receive
+            {messages, Messages} ->
+              Caller ! {ok, Messages}
+          end
+      end,
+      server_loop(Proxies)
   end.
 
 proxy_client(Messages) ->
