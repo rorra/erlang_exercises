@@ -22,13 +22,16 @@ register_nickname(NickName) ->
   end.
 
 poll(NickName) ->
-  global:send(?SERVER, {poll, Nickname, self()}),
+  global:send(?SERVER, {poll, NickName, self()}),
   receive
     {ok, Messages} ->
       Messages;
     Error ->
       Error
   end.
+
+send_message(Sender, Addressee, Message) ->
+  global:send(?SERVER, {send_message, Sender, Addressee, Message}).
 
 server_loop(Proxies) ->
   receive
@@ -54,6 +57,14 @@ server_loop(Proxies) ->
               Caller ! {ok, Messages}
           end
       end,
+      server_loop(Proxies);
+    {send_message, Sender, Addressee, Message} ->
+      case dict:find(Sender, Proxies) of
+        error ->
+          ok;
+        {ok, Pid} ->
+          Pid ! {send_message, Addressee, Message}
+      end,
       server_loop(Proxies)
   end.
 
@@ -64,6 +75,9 @@ proxy_client(Messages) ->
     {get_messages, Caller} ->
       Caller ! {messages, lists:reverse(Messages)},
       proxy_client([]);
+    {send_message, Addressee, Message} ->
+      message_router:send_chat_message(Addressee, Message),
+      proxy_client(Messages);
     stop ->
       io:format("Proxy stopping...~n"),
       ok

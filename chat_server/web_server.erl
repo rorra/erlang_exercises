@@ -5,6 +5,8 @@
 
 -export([start/1, stop/0, dispatch_requests/1]).
 
+-compile({no_auto_import,[error/2]}).
+
 start(Port) ->
   mochiweb_http:start([{port, Port},
     {loop, fun dispatch_requests/1}]).
@@ -22,9 +24,9 @@ handle("/register", Req) ->
   NickName = proplists:get_value("nick", Params),
   case mucc:register_nickname(NickName) of
     ok ->
-      Req:respond({200, [{"Content-Type", "text/plain"}], ?OK});
+      success(Req, ?OK);
     Error ->
-      Req:respond({500, [{"Content-Type", "text/plain"}], subst("Error: ~s~n", [Error])})
+      error(Req, subst("Error: ~s", [Error]))
   end;
 
 handle("/poll", Req) ->
@@ -32,18 +34,25 @@ handle("/poll", Req) ->
   NickName = proplists:get_value("nick", Params),
   case mucc:poll(NickName) of
     {error, Error} ->
-      Req:respond({500, [{"Content-Type", "text/plain"}], subst("Error: ~s~n", [Error])});
+      error(Req, subst("Error: ~s~n", Error));
     Messages ->
       io:format("~s~n", [Messages]),
       case length(Messages) == 0 of
         true ->
-          Req:respond({200, [{"Content-Type", "text/plain"}], <<"none">>});
+          success(Req, <<"none">>);
         false ->
           Template = lists:foldl(fun(_, Acc) -> ["~s~n"|Acc] end, [], Messages),
-          Req:respond({200, [{"Content-Type", "text/plain"}],
-            subst(lists:flatten(Template), Messages)})
+          success(Req, subst(lists:flatten(Template), Messages))
       end
   end;
+
+handle("/send", Req) ->
+  Params = Req:parse_qs(),
+  Sender = proplists:get_value("nick", Params),
+  Addressee = proplists:get_value("to", Params),
+  Message = proplists:get_value("msg", Params),
+  mucc:send_message(Sender, Addressee, Message),
+  success(Req, ?OK);
 
 handle(Unknown, Req) ->
   Req:respond({404, [{"Content-Type", "text/plain"}], subst("Unknown action: ~s~n", [Unknown])}).
@@ -58,3 +67,9 @@ clean_path(Path) ->
     N ->
       string:substr(Path, 1, string:len(Path) - (N + 1))
   end.
+
+error(Req, Body) when is_binary(Body) ->
+  Req:respond({500, [{"Content-Type", "text/plain"}], Body}).
+
+success(Req, Body) when is_binary(Body) ->
+  Req:respond({200, [{"Content-Type", "text/plain"}], Body}).
