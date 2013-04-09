@@ -33,6 +33,12 @@ poll(NickName) ->
 send_message(Sender, Addressee, Message) ->
   global:send(?SERVER, {send_message, Sender, Addressee, Message}).
 
+unregister(Nickname) ->
+  global:send(?SERVER, {unregister, Nickname}).
+
+crash(Nickname) ->
+  global:send(?SERVER, {crash, Nickname}).
+
 server_loop(Proxies) ->
   receive
     {register, NickName, Caller} ->
@@ -65,7 +71,15 @@ server_loop(Proxies) ->
         {ok, Pid} ->
           Pid ! {send_message, Addressee, Message}
       end,
-      server_loop(Proxies)
+      server_loop(Proxies);
+    {unregister, Nickname} ->
+      case dict:find(Nickname, Proxies) of
+        error ->
+          server_loop(Proxies);
+        {ok, Pid} ->
+          Pid ! stop,
+          server_loop(dict:erase(Nickname, Proxies))
+      end
   end.
 
 proxy_client(Messages) ->

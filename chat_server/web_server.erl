@@ -29,6 +29,12 @@ handle("/register", Req) ->
       error(Req, subst("Error: ~s", [Error]))
   end;
 
+handle("/unregister", Req) ->
+  Params = Req:parse_qs(),
+  Nickname = proplists:get_value("nick", Params),
+  mucc:unregister(Nickname),
+  success(Req, ?OK);
+
 handle("/poll", Req) ->
   Params = Req:parse_qs(),
   NickName = proplists:get_value("nick", Params),
