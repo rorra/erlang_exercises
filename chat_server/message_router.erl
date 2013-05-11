@@ -1,56 +1,167 @@
+%%%-------------------------------------------------------------------
+%%% @author Rodrigo Dominguez <rorra@Mac-mini-de-Rodrigo.local>
+%%% @copyright (C) 2013, Rodrigo Dominguez
+%%% @doc
+%%%
+%%% @end
+%%% Created : 11 May 2013 by Rodrigo Dominguez <rorra@Mac-mini-de-Rodrigo.local>
+%%%-------------------------------------------------------------------
 -module(message_router).
 
--define(SERVER, message_router).
+-behaviour(gen_server).
 
--compile(export_all).
+%% API
+-export([start_link/0, send_chat_message/2, register_nick/2, unregister_nick/1]).
 
-start() ->
-  server_util:start(?SERVER, {message_router, route_messages, [dict:new()]}),
-  message_store:start_link().
+%% gen_server callbacks
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2,
+	 terminate/2, code_change/3]).
 
-stop() ->
-  server_util:stop(?SERVER),
-  message_store:shutdown().
+-define(SERVER, ?MODULE). 
+
+%%%===================================================================
+%%% API
+%%%===================================================================
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Starts the server
+%%
+%% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
+%% @end
+%%--------------------------------------------------------------------
+start_link() ->
+    gen_server:start_link({global, ?SERVER}, ?MODULE, [], []).
 
 send_chat_message(Addressee, MessageBody) ->
-  global:send(?SERVER, {send_chat_msg, Addressee, MessageBody}).
+  gen_server:call({global, ?SERVER}, {send_chat_msg, Addressee, MessageBody}).
 
 register_nick(ClientName, ClientPid) ->
-  global:send(?SERVER, {register_nick, ClientName, ClientPid}).
+  gen_server:call({global, ?SERVER}, {register_nick, ClientName, ClientPid}).
 
 unregister_nick(ClientName) ->
-  global:send(?SERVER, {unregister_nick, ClientName}).
+  gen_server:call({global, ?SERVER}, {unregister_nick, ClientName}).
 
-route_messages(Clients) ->
-  receive
-    {send_chat_msg, ClientName, MessageBody} ->
-      case dict:find(ClientName, Clients) of
+
+%%%===================================================================
+%%% gen_server callbacks
+%%%===================================================================
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Initializes the server
+%%
+%% @spec init(Args) -> {ok, State} |
+%%                     {ok, State, Timeout} |
+%%                     ignore |
+%%                     {stop, Reason}
+%% @end
+%%--------------------------------------------------------------------
+init([]) ->
+    message_store:start_link(),
+    {ok, dict:new()}.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Handling call messages
+%%
+%% @spec handle_call(Request, From, State) ->
+%%                                   {reply, Reply, State} |
+%%                                   {reply, Reply, State, Timeout} |
+%%                                   {noreply, State} |
+%%                                   {noreply, State, Timeout} |
+%%                                   {stop, Reason, Reply, State} |
+%%                                   {stop, Reason, State}
+%% @end
+%%--------------------------------------------------------------------
+
+handle_call({send_chat_msg, ClientName, MessageBody}, _From, Clients) ->
+    case dict:find(ClientName, Clients) of
         {ok, ClientPid} ->
-          ClientPid ! {printmsg, MessageBody};
+	    ClientPid ! {printmsg, MessageBody};
         error ->
-          message_store:save_message(ClientName, MessageBody),
-          io:format("Archived message for ~p~n", [ClientName])
-      end,
-      route_messages(Clients);
-    {register_nick, ClientName, ClientPid} ->
-      Messages = message_store:find_messages(ClientName),
-      lists:foreach(fun(Msg) -> ClientPid ! {printmsg, Msg} end, Messages),
-      route_messages(dict:store(ClientName, ClientPid, Clients));
-    {unregister_nick, ClientName} ->
-      case dict:find(ClientName, Clients) of
-        {ok, ClientPid} ->
-          ClientPid ! stop,
-          route_messages(dict:erase(ClientName, Clients));
-        error ->
-          io:format("Error! Unknown client ~p~n", [ClientName]),
-          route_messages(Clients)
-      end;
-    shutdown ->
-      io:format("Shutting down~n");
-    Oops ->
-      io:format("Warning! Receied: ~p~n", [Oops]),
-      route_messages(Clients)
-  end.
+	    message_store:save_message(ClientName, MessageBody),
+	    io:format("Archived message for ~p~n", [ClientName])
+    end,
+    {reply, ok, Clients};
 
-  
+handle_call({register_nick, ClientName, ClientPid}, _From, Clients) ->
+    Messages = message_store:find_messages(ClientName),
+    lists:foreach(fun(Msg) -> ClientPid ! {printmsg, Msg} end, Messages),
+    {reply, ok, dict:store(ClientName, ClientPid, Clients)};
 
+handle_call({unregister_nick, ClientName}, _From, Clients) ->
+    UpdateClients = case dict:find(ClientName, Clients) of
+			{ok, ClientPid} ->
+			    ClientPid ! stop,
+			    dict:erase(ClientName, Clients);
+			error ->
+			    io:format("Error! Unknown client ~p~n", [ClientName]),
+			    Clients	    
+		    end,
+    {reply, ok, UpdateClients};
+
+handle_call(_Request, _From, State) ->
+    Reply = ok,
+    {reply, Reply, State}.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Handling cast messages
+%%
+%% @spec handle_cast(Msg, State) -> {noreply, State} |
+%%                                  {noreply, State, Timeout} |
+%%                                  {stop, Reason, State}
+%% @end
+%%--------------------------------------------------------------------
+handle_cast(stop, State) ->
+    message_store:shutdown(),
+    {stop, normal, State};
+
+handle_cast(_Msg, State) ->
+    {noreply, State}.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Handling all non call/cast messages
+%%
+%% @spec handle_info(Info, State) -> {noreply, State} |
+%%                                   {noreply, State, Timeout} |
+%%                                   {stop, Reason, State}
+%% @end
+%%--------------------------------------------------------------------
+handle_info(_Info, State) ->
+    {noreply, State}.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% This function is called by a gen_server when it is about to
+%% terminate. It should be the opposite of Module:init/1 and do any
+%% necessary cleaning up. When it returns, the gen_server terminates
+%% with Reason. The return value is ignored.
+%%
+%% @spec terminate(Reason, State) -> void()
+%% @end
+%%--------------------------------------------------------------------
+terminate(_Reason, _State) ->
+    ok.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Convert process state when code is changed
+%%
+%% @spec code_change(OldVsn, State, Extra) -> {ok, NewState}
+%% @end
+%%--------------------------------------------------------------------
+code_change(_OldVsn, State, _Extra) ->
+    {ok, State}.
+
+%%%===================================================================
+%%% Internal functions
+%%%===================================================================
