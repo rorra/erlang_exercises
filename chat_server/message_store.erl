@@ -6,7 +6,7 @@
 %%% @end
 %%% Created : 11 May 2013 by Rodrigo Dominguez <rorra@Mac-mini-de-Rodrigo.local>
 %%%-------------------------------------------------------------------
--module(message_store_new).
+-module(message_store).
 
 -behaviour(gen_server).
 

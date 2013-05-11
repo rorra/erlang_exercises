@@ -6,11 +6,11 @@
 
 start() ->
   server_util:start(?SERVER, {message_router, route_messages, [dict:new()]}),
-  message_store:start().
+  message_store:start_link().
 
 stop() ->
   server_util:stop(?SERVER),
-  message_store:stop().
+  message_store:shutdown().
 
 send_chat_message(Addressee, MessageBody) ->
   global:send(?SERVER, {send_chat_msg, Addressee, MessageBody}).
