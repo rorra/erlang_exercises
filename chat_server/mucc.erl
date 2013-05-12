@@ -1,86 +1,106 @@
 -module(mucc).
 
--author("rorra").
+-behavior(gen_server).
 
--define(SERVER, mucc).
+-define(SERVER, ?MODULE).
 
--compile(export_all).
+%% gen_server callbacks
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
-start() ->
-  server_util:start(?SERVER, {mucc, server_loop, [dict:new()]}).
+%% API
 
-stop() ->
-  server_util:stop(?SERVER).
+-export([start_link/0, register_nickname/1, poll/1, send_message/3, unregister/1]).
 
+%% Public API
 register_nickname(NickName) ->
-  global:send(?SERVER, {register, NickName, self()}),
-  receive
-    ok ->
-      ok;
-    {error, Error} ->
-      Error
+  case gen_server:call({global, ?SERVER}, {register, NickName}) of
+      ok ->
+	  ok;
+      {error, Error} ->
+	  Error
   end.
 
 poll(NickName) ->
-  global:send(?SERVER, {poll, NickName, self()}),
-  receive
-    {ok, Messages} ->
-      Messages;
-    Error ->
-      Error
+  case gen_server:call({global, ?SERVER}, {poll, NickName}) of
+      {ok, Messages} ->
+	  Messages;
+      Error ->
+	  Error
   end.
 
 send_message(Sender, Addressee, Message) ->
-  global:send(?SERVER, {send_message, Sender, Addressee, Message}).
+  gen_server:cast({global, ?SERVER}, {send_message, Sender, Addressee, Message}).
 
 unregister(Nickname) ->
-  global:send(?SERVER, {unregister, Nickname}).
+  gen_server:cast({global, ?SERVER}, {unregister, Nickname}).
 
-crash(Nickname) ->
-  global:send(?SERVER, {crash, Nickname}).
+start_link() ->
+    gen_server:start_link({global, ?SERVER}, ?MODULE, [], []).
 
-server_loop(Proxies) ->
-  receive
-    {register, NickName, Caller} ->
-      case dict:find(NickName, Proxies) of
+init([]) ->
+    process_flag(trap_exit, true),
+    io:format("~p (~p) starting....~n", [?MODULE, self()]),
+    {ok, dict:new()}.
+
+
+handle_call({register, NickName}, _From, State) ->
+    case dict:find(NickName, State) of
         error ->
-          Pid = spawn(fun() -> proxy_client([]) end),
-          message_router:register_nick(NickName, Pid),
-          Caller ! ok,
-          server_loop(dict:store(NickName, Pid, Proxies));
+	    Pid = spawn(fun() -> 
+				process_flag(trap_exit, true),
+				proxy_client([]) end),
+	    erlang:monitor(process, Pid),
+	    message_router:register_nick(NickName, Pid),
+	    {reply, ok, dict:store(NickName, Pid, State)};
         {ok, _} ->
-          Caller ! {error, duplicate_nick_found},
-          server_loop(Proxies)
-      end;
-    {poll, NickName, Caller} ->
-      case dict:find(NickName, Proxies) of
+	    {reply, {error, duplicate_nick_found}, State}
+    end;
+
+handle_call({poll, NickName}, _From, State) ->
+      case dict:find(NickName, State) of
         error ->
-          Caller ! {error, unknown_nick};
+	      {reply, {error, unknown_nick}, State};
         {ok, Pid} ->
           Pid ! {get_messages, self()},
           receive
             {messages, Messages} ->
-              Caller ! {ok, Messages}
+		  {reply, {ok, Messages}, State}
           end
-      end,
-      server_loop(Proxies);
-    {send_message, Sender, Addressee, Message} ->
-      case dict:find(Sender, Proxies) of
+      end;
+
+handle_call(_Request, _From, State) ->
+    Reply = ok,
+    {reply, Reply, State}.
+
+handle_cast({unregister, Nickname}, State) ->
+    case dict:find(Nickname, State) of
         error ->
-          ok;
+	    ok;
         {ok, Pid} ->
-          Pid ! {send_message, Addressee, Message}
-      end,
-      server_loop(Proxies);
-    {unregister, Nickname} ->
-      case dict:find(Nickname, Proxies) of
+	    Pid ! stop
+    end,
+    {noreply, State};
+
+handle_cast({send_message, Sender, Addressee, Message}, State) ->
+    case dict:find(Sender, State) of
         error ->
-          server_loop(Proxies);
+	    ok;
         {ok, Pid} ->
-          Pid ! stop,
-          server_loop(dict:erase(Nickname, Proxies))
-      end
-  end.
+	    Pid ! {send_message, Addressee, Message}
+    end,
+    {noreply, State};    
+
+handle_cast(_Msg, State) ->
+    {noreply, State}.
+
+handle_info(_Info, State) ->
+    {noreply, State}.
+
+terminate(_Reason, _State) ->
+    ok.
+
+code_change(_OldSvn, State, _Extra) ->
+    {ok, State}.
 
 proxy_client(Messages) ->
   receive

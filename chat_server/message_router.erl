@@ -59,8 +59,12 @@ unregister_nick(ClientName) ->
 %% @end
 %%--------------------------------------------------------------------
 init([]) ->
-    message_store:start_link(),
+    process_flag(trap_exit, true),
+    io:format("~p (~p) starting...~n", [?MODULE, self()]),
     {ok, dict:new()}.
+
+shutdown() ->
+    gen_server:call(?SERVER, stop).
 
 %%--------------------------------------------------------------------
 %% @private
